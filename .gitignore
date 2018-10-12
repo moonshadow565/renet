@@ -1,5 +1,5 @@
 
-# Created by https://www.gitignore.io/api/c,c++,rust,cmake,clion,intellij,kdevelop4,qtcreator,visualstudio,visualstudiocode
+# Created by https://www.gitignore.io/api/c,c++,kate,rust,cmake,clion,intellij,kdevelop4,qtcreator,visualstudio,visualstudiocode
 
 ### C ###
 # Prerequisites
@@ -213,6 +213,11 @@ CTestTestfile.cmake
 # *.ipr
 
 # Sonarlint plugin
+
+### Kate ###
+# Swap Files #
+.*.kate-swp
+.swp.*
 
 ### KDevelop4 ###
 *.kdev4
@@ -597,4 +602,4 @@ ASALocalRun/
 .localhistory/
 
 
-# End of https://www.gitignore.io/api/c,c++,rust,cmake,clion,intellij,kdevelop4,qtcreator,visualstudio,visualstudiocode
+# End of https://www.gitignore.io/api/c,c++,kate,rust,cmake,clion,intellij,kdevelop4,qtcreator,visualstudio,visualstudiocode
