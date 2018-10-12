@@ -3,6 +3,7 @@ extern crate cc;
 fn main() {
     cc::Build::new()
         .warnings(false)
+        .include(".")
         .file("enet/callbacks.c")
         .file("enet/host.c")
         .file("enet/list.c")

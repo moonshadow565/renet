@@ -1,45 +1,55 @@
-extern crate std;
+#![feature(rustc_private)]
 
-mod defs;
-use self::defs::*;
-use std::mem::size_of;
-use std::os::raw::*;
+extern crate std;
+#[macro_use]
+extern crate bitflags;
+
+pub mod native;
+pub mod renet;
+
+
+use self::renet::*;
 
 fn main() {
-    if !renet_initialize() {
-        panic!("Failed to initialize enet!");
-    } else {
-        println!("Initialized enet!");
-    }
-    let mut server = ReNetServerHost::new(ReNetAddress{
-        host: HOST_ANY,
-        port: 1234,
-    }, 32,0, 0).unwrap();
+    renet_initialize().unwrap();
+    println!("Initialized enet!");
+    let mut server = ReNetServerHost::new(
+        ReNetAddress {
+            host: ENET_HOST_ANY,
+            port: 1234,
+        },
+        32,
+        0,
+        0,
+    ).unwrap();
+    println!("Created server!");
 
-    while true  {
-        let myb = server.service(100).unwrap();
-        match myb {
-            None => continue,
-            Some(event) => match event {
-                ReNetEvent::Connect {
-                    peer
-                } => {
-                    println!("Peer conntected!");
-                },
-                ReNetEvent::Disconnect {
-                    peer,
-                    data
-                } =>  {
-                    println!("Peer disconnected!");
-                },
-                ReNetEvent::Receive {
-                    peer,
-                    packet,
-                    channelID,
-                } => {
-                    println!("Got data on {} with message: {:x?}", channelID, packet.data);
-                }
+    loop {
+        match server.service(Some(1000)).unwrap() {
+            ReNetEvent::None => {
+                server.broadcast(1, &[b'p', b'i', b'n', b'g', b'!', 0], Default::default());
+                continue
+            },
+            ReNetEvent::Connect {
+                peer
+            } => {
+                println!("Peer connected!");
+            },
+            ReNetEvent::Disconnect {
+                peer,
+                data,
+            } => {
+                println!("Peer disconnected!");
+            },
+            ReNetEvent::Receive {
+                peer,
+                channelID,
+                data,
+                flags
+            } => {
+                println!("Received data on {} with flags {:x?} : {:x?}", channelID, flags, data);
             }
         }
     }
+    renet_deinitialize();
 }

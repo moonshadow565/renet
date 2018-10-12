@@ -4,7 +4,7 @@
 */
 #define ENET_BUILDING_LIB 1
 #include <string.h>
-#include "enet.h"
+#include "enet/enet.h"
 
 /** @defgroup host ENet host functions
     @{
@@ -27,40 +27,66 @@
 ENetHost *
 enet_host_create (const ENetAddress * address, size_t peerCount, enet_uint32 incomingBandwidth, enet_uint32 outgoingBandwidth)
 {
-    ENetHost * host = (ENetHost *) enet_malloc (sizeof (ENetHost));
+    ENetHost * host;
     ENetPeer * currentPeer;
 
     if (peerCount > ENET_PROTOCOL_MAXIMUM_PEER_ID)
       return NULL;
 
+    host = (ENetHost *) enet_malloc (sizeof (ENetHost));
+    if (host == NULL)
+      return NULL;
+
     host -> peers = (ENetPeer *) enet_malloc (peerCount * sizeof (ENetPeer));
+    if (host -> peers == NULL)
+    {
+       enet_free (host);
+
+       return NULL;
+    }
     memset (host -> peers, 0, peerCount * sizeof (ENetPeer));
 
-    host -> socket = enet_socket_create (ENET_SOCKET_TYPE_DATAGRAM, address);
-    if (host -> socket == ENET_SOCKET_NULL)
+    host -> socket = enet_socket_create (ENET_SOCKET_TYPE_DATAGRAM);
+    if (host -> socket == ENET_SOCKET_NULL || (address != NULL && enet_socket_bind (host -> socket, address) < 0))
     {
+       if (host -> socket != ENET_SOCKET_NULL)
+         enet_socket_destroy (host -> socket);
+
        enet_free (host -> peers);
        enet_free (host);
 
        return NULL;
     }
 
+    enet_socket_set_option (host -> socket, ENET_SOCKOPT_NONBLOCK, 1);
+    enet_socket_set_option (host -> socket, ENET_SOCKOPT_BROADCAST, 1);
+    enet_socket_set_option (host -> socket, ENET_SOCKOPT_RCVBUF, ENET_HOST_RECEIVE_BUFFER_SIZE);
+    enet_socket_set_option (host -> socket, ENET_SOCKOPT_SNDBUF, ENET_HOST_SEND_BUFFER_SIZE);
+
     if (address != NULL)
       host -> address = * address;
 
+    host -> channelLimit = ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT;
     host -> incomingBandwidth = incomingBandwidth;
     host -> outgoingBandwidth = outgoingBandwidth;
     host -> bandwidthThrottleEpoch = 0;
     host -> recalculateBandwidthLimits = 0;
     host -> mtu = ENET_HOST_DEFAULT_MTU;
     host -> peerCount = peerCount;
-    host -> lastServicedPeer = host -> peers;
     host -> commandCount = 0;
     host -> bufferCount = 0;
+    host -> checksum = NULL;
     host -> receivedAddress.host = ENET_HOST_ANY;
     host -> receivedAddress.port = 0;
     host -> receivedDataLength = 0;
      
+    host -> totalSentData = 0;
+    host -> totalSentPackets = 0;
+    host -> totalReceivedData = 0;
+    host -> totalReceivedPackets = 0;
+
+    enet_list_clear (& host -> dispatchQueue);
+
     for (currentPeer = host -> peers;
          currentPeer < & host -> peers [host -> peerCount];
          ++ currentPeer)
@@ -74,6 +100,7 @@ enet_host_create (const ENetAddress * address, size_t peerCount, enet_uint32 inc
        enet_list_clear (& currentPeer -> sentUnreliableCommands);
        enet_list_clear (& currentPeer -> outgoingReliableCommands);
        enet_list_clear (& currentPeer -> outgoingUnreliableCommands);
+       enet_list_clear (& currentPeer -> dispatchedCommands);
 
        enet_peer_reset (currentPeer);
     }
@@ -134,10 +161,12 @@ enet_host_connect (ENetHost * host, const ENetAddress * address, size_t channelC
     if (currentPeer >= & host -> peers [host -> peerCount])
       return NULL;
 
+    currentPeer -> channels = (ENetChannel *) enet_malloc (channelCount * sizeof (ENetChannel));
+    if (currentPeer -> channels == NULL)
+      return NULL;
+    currentPeer -> channelCount = channelCount;
     currentPeer -> state = ENET_PEER_STATE_CONNECTING;
     currentPeer -> address = * address;
-    currentPeer -> channels = (ENetChannel *) enet_malloc (channelCount * sizeof (ENetChannel));
-    currentPeer -> channelCount = channelCount;
     currentPeer -> sessionID = (enet_uint32) enet_rand ();
 
     if (host -> outgoingBandwidth == 0)
@@ -164,6 +193,9 @@ enet_host_connect (ENetHost * host, const ENetAddress * address, size_t channelC
 
         enet_list_clear (& channel -> incomingReliableCommands);
         enet_list_clear (& channel -> incomingUnreliableCommands);
+
+        channel -> usedReliableWindows = 0;
+        memset (channel -> reliableWindows, 0, sizeof (channel -> reliableWindows));
     }
         
     command.header.command = ENET_PROTOCOL_COMMAND_CONNECT | ENET_PROTOCOL_COMMAND_FLAG_ACKNOWLEDGE;
@@ -184,6 +216,22 @@ enet_host_connect (ENetHost * host, const ENetAddress * address, size_t channelC
     return currentPeer;
 }
 
+/** Limits the maximum allowed channels of future incoming connections.
+    @param host host to limit
+    @param channelLimit the maximum number of channels allowed; if 0, then this is equivalent to ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT
+*/
+void
+enet_host_channel_limit (ENetHost * host, size_t channelLimit)
+{
+    if (! channelLimit || channelLimit > ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT)
+      channelLimit = ENET_PROTOCOL_MAXIMUM_CHANNEL_COUNT;
+    else
+    if (channelLimit < ENET_PROTOCOL_MINIMUM_CHANNEL_COUNT)
+      channelLimit = ENET_PROTOCOL_MINIMUM_CHANNEL_COUNT;
+
+    host -> channelLimit = channelLimit;
+}
+ 
 /** Queues a packet to be sent to all peers associated with the host.
     @param host host on which to broadcast the packet
     @param channelID channel on which to broadcast
